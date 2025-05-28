@@ -9,13 +9,13 @@ app = Flask(__name__, static_folder='static', template_folder='.')
 
 # --- Firebase Configuration (REPLACE WITH YOUR ACTUAL CONFIG) ---
 FIREBASE_CONFIG = {
-    "apiKey": "AIzaSyAPdAtOfpfW6YQYGet8Ow6OjYi4EAUb_N4",
-    "authDomain": "kseb-tracker-app.firebaseapp.com",
-    "projectId": "kseb-tracker-app",
-    "storageBucket": "kseb-tracker-app.firebasestorage.app",
-    "messagingSenderId": "246760546625",
-    "appId": "1:246760546625:web:470cc5ee3e95d59bb541c0",
-    "measurementId": "G-S0BJY7MTBV"
+  "apiKey": "YOUR_API_KEY",
+  "authDomain": "YOUR_PROJECT_ID.firebaseapp.com",
+  "projectId": "YOUR_PROJECT_ID",
+  "storageBucket": "YOUR_PROJECT_ID.appspot.com",
+  "messagingSenderId": "YOUR_SENDER_ID",
+  "appId": "YOUR_APP_ID",
+  "measurementId": "YOUR_MEASUREMENT_ID"
 }
 
 # --- Flask Routes ---

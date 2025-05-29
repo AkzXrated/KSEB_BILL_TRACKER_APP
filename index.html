@@ -35,76 +35,121 @@
         }
 
         .collapsible-content:not(.hidden) {
-            max-height: 500px;
-            /* A large enough value to accommodate content */
+            max-height: 9999px;
+            /* Increased to allow content to fully expand */
             opacity: 1;
+        }
+
+        /* Custom scrollbar for webkit browsers */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #2d3748;
+            /* bg-gray-800 */
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            /* bg-gray-600 */
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #606b7d;
+            /* bg-gray-500 hover */
         }
     </style>
 </head>
 
-<body class="bg-gray-900 text-gray-100 flex justify-center items-center min-h-screen p-4">
-    <div class="app-container bg-gray-800 rounded-xl shadow-lg p-8 max-w-2xl w-full">
-        <h1 class="text-4xl font-bold text-center text-white mb-8">KSEB Bill Tracker</h1>
-        <p id="status-message" class="text-center text-gray-300 mb-6">Connecting to Firebase...</p>
+<body class="bg-gray-900 text-gray-100 flex flex-col min-h-screen p-4">
+    <div
+        class="app-container bg-gray-800 rounded-xl shadow-lg p-8 max-w-2xl w-full mx-auto flex-grow flex flex-col items-center">
+        <h1 class="text-4xl font-bold text-center text-white mb-4">KSEB Bill Tracker</h1>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="bg-gray-700 p-6 rounded-lg shadow-md">
-                <h2 class="text-2xl font-semibold text-white mb-4">Daily Meter Reading</h2>
+        <p id="status-message" class="text-center text-gray-300 mb-2">Initializing...</p>
 
-                <div class="mb-4">
-                    <label for="reading-date" class="block text-gray-300 text-sm font-bold mb-2">Date:</label>
-                    <input type="text" id="reading-date" placeholder="DD-MM-YYYY"
-                        class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-900 leading-tight focus:outline-none focus:shadow-outline bg-gray-200">
+        <div id="auth-section" class="text-center mb-6">
+            <p id="auth-status" class="text-gray-400 mb-3"></p>
+            <button id="google-sign-in-btn"
+                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline flex items-center justify-center mx-auto space-x-2">
+                <i class="fab fa-google"></i>
+                <span>Sign in with Google</span>
+            </button>
+            <button id="anonymous-sign-in-btn"
+                class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline mx-auto mt-2">
+                Continue Anonymously
+            </button>
+            <button id="sign-out-btn"
+                class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline hidden mx-auto mt-2">
+                Sign Out
+            </button>
+        </div>
+
+        <div id="main-app-content" class="hidden w-full">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div class="bg-gray-700 p-6 rounded-lg shadow-md">
+                    <h2 class="text-2xl font-semibold text-white mb-4">Daily Meter Reading</h2>
+
+                    <div class="mb-4">
+                        <label for="reading-date" class="block text-gray-300 text-sm font-bold mb-2">Date:</label>
+                        <input type="text" id="reading-date" placeholder="DD-MM-YYYY"
+                            class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-900 leading-tight focus:outline-none focus:shadow-outline bg-gray-200">
+                    </div>
+                    <div class="mb-6">
+                        <label for="meter-reading" class="block text-gray-300 text-sm font-bold mb-2">Meter Reading
+                            (Units):</label>
+                        <input type="number" id="meter-reading" placeholder="e.g., 12345"
+                            class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-900 leading-tight focus:outline-none focus:shadow-outline bg-gray-200">
+                    </div>
+
+                    <button id="save-reading-btn"
+                        class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline w-full">
+                        Save Reading
+                    </button>
+                    <p id="daily-reading-feedback" class="text-green-400 text-sm mt-3 text-center"></p>
+
+                    <div class="bg-blue-900 p-6 rounded-lg shadow-md mt-6">
+                        <h3 class="text-2xl font-semibold text-blue-300 mb-3">Your Latest Reading:</h3>
+                        <p class="text-xl text-blue-100 mb-2">
+                            <span id="latest-reading-date" class="font-bold mr-2">--/--/----</span>:
+                            <span id="latest-reading-value" class="font-extrabold text-white text-3xl">--</span> Units
+                        </p>
+                        <p class="text-lg text-blue-200 mt-3">Units Consumed (since last reading): <span
+                                id="units-consumed-daily" class="font-bold text-white">--</span></p>
+                    </div>
                 </div>
-                <div class="mb-6">
-                    <label for="meter-reading" class="block text-gray-300 text-sm font-bold mb-2">Meter Reading
-                        (Units):</label>
-                    <input type="number" id="meter-reading" placeholder="e.g., 12345"
-                        class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-900 leading-tight focus:outline-none focus:shadow-outline bg-gray-200">
-                </div>
 
-                <button id="save-reading-btn"
-                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline w-full">
-                    Save Reading
-                </button>
-                <p id="daily-reading-feedback" class="text-green-400 text-sm mt-3 text-center"></p>
-
-                <div class="bg-blue-900 p-6 rounded-lg shadow-md mt-6">
-                    <h3 class="text-2xl font-semibold text-blue-300 mb-3">Your Latest Reading:</h3>
-                    <p class="text-xl text-blue-100 mb-2">
-                        <span id="latest-reading-date" class="font-bold mr-2">--/--/----</span>:
-                        <span id="latest-reading-value" class="font-extrabold text-white text-3xl">--</span> Units
+                <div class="bg-gray-700 p-6 rounded-lg shadow-md">
+                    <h2 class="text-2xl font-semibold text-white mb-4">Estimated Bill So Far</h2>
+                    <p class="text-gray-300 text-sm mb-2">Cycle: <span id="bill-cycle-dates"
+                            class="font-medium">N/A</span>
                     </p>
-                    <p class="text-lg text-blue-200 mt-3">Units Consumed (since last reading): <span
-                            id="units-consumed-daily" class="font-bold text-white">--</span></p>
+                    <p class="text-lg text-gray-200 mb-2">Units in Cycle: <span id="estimated-units-in-cycle"
+                            class="font-bold">--</span></p>
+                    <p class="text-2xl font-bold text-green-400 mb-4">Est. Bill: ₹<span
+                            id="estimated-bill-amount">0.00</span></p>
+
+                    <div class="text-gray-300 text-sm">
+                        <h4 class="font-semibold text-white mb-1">Details:</h4>
+                        <ul id="bill-details-list" class="list-disc list-inside ml-2">
+                            <li>Fixed Charge: ₹<span id="fixed-charge">0.00</span></li>
+                            <li>Energy Charge: ₹<span id="energy-charge">0.00</span></li>
+                            <li>Meter Rent: ₹<span id="meter-rent">0.00</span></li>
+                            <li><span id="bill-other-charges">Other Charges: ₹0.00</span></li>
+                        </ul>
+                    </div>
+                    <p id="estimated-bill-feedback" class="text-sm mt-4 p-2 rounded-md whitespace-normal text-center">
+                    </p>
+
+                    <div id="consumption-warning" class="text-sm mt-4 p-2 rounded-md whitespace-normal text-center">
+                    </div>
                 </div>
             </div>
 
-            <div class="bg-gray-700 p-6 rounded-lg shadow-md">
-                <h2 class="text-2xl font-semibold text-white mb-4">Estimated Bill So Far</h2>
-                <p class="text-gray-300 text-sm mb-2">Cycle: <span id="bill-cycle-dates" class="font-medium">N/A</span>
-                </p>
-                <p class="text-lg text-gray-200 mb-2">Units in Cycle: <span id="estimated-units-in-cycle"
-                        class="font-bold">--</span></p>
-                <p class="text-2xl font-bold text-green-400 mb-4">Est. Bill: ₹<span
-                        id="estimated-bill-amount">0.00</span></p>
-
-                <div class="text-gray-300 text-sm">
-                    <h4 class="font-semibold text-white mb-1">Details:</h4>
-                    <ul id="bill-details-list" class="list-disc list-inside ml-2">
-                        <li>Fixed Charge: ₹<span id="fixed-charge">0.00</span></li>
-                        <li>Energy Charge: ₹<span id="energy-charge">0.00</span></li>
-                        <li>Meter Rent: ₹<span id="meter-rent">0.00</span></li>
-                        <li><span id="bill-other-charges">Other Charges: ₹0.00</span></li>
-                    </ul>
-                </div>
-                <p id="estimated-bill-feedback" class="text-sm mt-4 p-2 rounded-md whitespace-normal text-center"></p>
-
-                <div id="consumption-warning" class="text-sm mt-4 p-2 rounded-md whitespace-normal text-center">
-                </div>
-            </div>
-
-            <div class="bg-gray-700 p-6 rounded-lg shadow-md col-span-1 md:col-span-2">
+            <div class="bg-gray-700 p-6 rounded-lg shadow-md mb-6">
                 <div id="official-bill-header" class="flex justify-between items-center cursor-pointer mb-4">
                     <h2 class="text-2xl font-semibold text-white">Finalize Official KSEB Bill</h2>
                     <i id="official-bill-toggle-icon"
@@ -140,17 +185,19 @@
                     </button>
                     <p id="official-bill-feedback" class="text-sm mt-3 text-center"></p>
 
-                    <div class="mt-6 pt-4 border-t border-gray-600 text-gray-300 text-sm">
-                        <p class="mb-1 whitespace-normal"><span id="estimated-vs-actual" class="font-medium"></span></p>
-                        <p class="mb-1 whitespace-normal"><span id="previous-bill-comparison"
+                    <div class="mt-6 pt-4 border-t border-gray-600 px-4">
+                        <p class="py-1 whitespace-normal break-words text-white"><span id="estimated-vs-actual"
                                 class="font-medium"></span></p>
-                        <p class="mb-1 whitespace-normal"><span id="average-bill-comparison" class="font-medium"></span>
+                        <p class="py-1 whitespace-normal break-words text-white"><span id="previous-bill-comparison"
+                                class="font-medium"></span></p>
+                        <p class="py-1 whitespace-normal break-words text-white"><span id="average-bill-comparison"
+                                class="font-medium"></span>
                         </p>
                     </div>
                 </div>
             </div>
 
-            <div class="bg-gray-700 p-6 rounded-lg shadow-md col-span-1 md:col-span-2 flex items-center justify-center">
+            <div class="bg-gray-700 p-6 rounded-lg shadow-md flex items-center justify-center">
                 <h2 class="text-xl font-semibold text-gray-400">Usage Analytics (Coming Soon)</h2>
             </div>
         </div>
@@ -174,6 +221,10 @@
         </div>
     </div>
 
+    <footer class="w-full text-center py-4 text-gray-500 text-sm">
+        <p>&copy; 2025 KSEB Bill Tracker. All rights reserved.</p>
+        <p>Made with ❤️ in Kannur, Kerala, India.</p>
+    </footer>
 </body>
 
 </html>

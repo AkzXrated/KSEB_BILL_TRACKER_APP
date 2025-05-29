@@ -2,6 +2,7 @@
 let db;
 let currentUserUid;
 let auth;
+let isExplicitlySigningOut = false;
 
 // Variables to store the latest reading data for validation
 let latestReadingData = null; // Stores { date: 'YYYY-MM-DD', reading: number }
@@ -9,11 +10,19 @@ let latestReadingData = null; // Stores { date: 'YYYY-MM-DD', reading: number }
 // --- Modal Control Functions ---
 // These functions will show and hide our custom confirmation modal
 function showConfirmationModal(title, message, onConfirm, onCancel) {
-    document.getElementById('modal-title').textContent = title;
-    document.getElementById('modal-message').textContent = message;
-
+    const modalTitle = document.getElementById('modal-title');
+    const modalMessage = document.getElementById('modal-message');
     const confirmBtn = document.getElementById('modal-confirm-btn');
     const cancelBtn = document.getElementById('modal-cancel-btn');
+    const confirmationModal = document.getElementById('confirmation-modal');
+
+    if (!modalTitle || !modalMessage || !confirmBtn || !cancelBtn || !confirmationModal) {
+        console.error("Confirmation modal elements not found. Cannot show modal.");
+        return;
+    }
+
+    modalTitle.textContent = title;
+    modalMessage.textContent = message;
 
     // Clear previous event listeners
     confirmBtn.onclick = null;
@@ -29,11 +38,14 @@ function showConfirmationModal(title, message, onConfirm, onCancel) {
         if (onCancel) onCancel();
     };
 
-    document.getElementById('confirmation-modal').classList.remove('hidden');
+    confirmationModal.classList.remove('hidden');
 }
 
 function hideConfirmationModal() {
-    document.getElementById('confirmation-modal').classList.add('hidden');
+    const confirmationModal = document.getElementById('confirmation-modal');
+    if (confirmationModal) {
+        confirmationModal.classList.add('hidden');
+    }
 }
 
 // Helper function to format date for display (DD-MM-YYYY)
@@ -75,15 +87,27 @@ async function getFirebaseConfig() {
         return config;
     } catch (error) {
         console.error("Error fetching Firebase config:", error);
-        document.getElementById('status-message').textContent = "Error: Could not load Firebase configuration.";
+        const statusMessageElement = document.getElementById('status-message'); // Temporarily get it here for error message
+        if (statusMessageElement) {
+            statusMessageElement.textContent = "Error: Could not load Firebase configuration.";
+        }
         return null;
     }
 }
 
 // Function to initialize Firebase and handle authentication
-async function initializeFirebaseAndAuth() {
-    const statusMessageElement = document.getElementById('status-message');
+// Now accepts DOM elements as arguments
+async function initializeFirebaseAndAuth(elements) {
+    const { statusMessageElement, authStatusElement, googleSignInBtn, anonymousSignInBtn, signOutBtn, mainAppContent } = elements;
+
+    // Set initial UI state immediately
+    mainAppContent.classList.add('hidden');
+    googleSignInBtn.classList.remove('hidden');
+    anonymousSignInBtn.classList.remove('hidden');
+    signOutBtn.classList.add('hidden');
+    authStatusElement.textContent = "Please sign in or continue anonymously.";
     statusMessageElement.textContent = "Connecting to Firebase...";
+
 
     const firebaseConfig = await getFirebaseConfig();
 
@@ -95,49 +119,103 @@ async function initializeFirebaseAndAuth() {
 
     try {
         // Initialize Firebase
-        firebase.initializeApp(firebaseConfig);
+        if (!firebase.apps.length) { // Prevent re-initialization
+            firebase.initializeApp(firebaseConfig);
+        }
         auth = firebase.auth();
         db = firebase.firestore();
 
         console.log("Firebase initialized successfully!");
 
-        // --- Anonymous Authentication ---
-        await auth.signInAnonymously();
-        currentUserUid = auth.currentUser.uid;
-        console.log("Signed in anonymously to Firebase. User ID:", currentUserUid);
+        // --- Attach Authentication Button Event Listeners NOW ---
+        // These are attached here AFTER firebase.auth() has been called and assigned to 'auth'
+        googleSignInBtn.addEventListener('click', signInWithGoogle);
+        anonymousSignInBtn.addEventListener('click', signInAnonymouslyExplicitly);
+        signOutBtn.addEventListener('click', signOutUser);
+        console.log("Authentication button listeners attached.");
 
-        // Update user document in Firestore (for tracking last access)
-        const userDocRef = db.collection('users').doc(currentUserUid);
-        await userDocRef.set({
-            lastAccess: firebase.firestore.FieldValue.serverTimestamp(),
-            appVersion: '0.1.0'
-        }, { merge: true });
+        // --- Authentication State Listener ---
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                // User is signed in.
+                currentUserUid = user.uid;
+                console.log("Auth state changed. Current User ID:", currentUserUid);
 
-        console.log("User document created/updated in Firestore.");
-        statusMessageElement.textContent = "Firebase connected and user authenticated! Ready for data entry.";
+                // Update user document in Firestore (for tracking last access)
+                const userDocRef = db.collection('users').doc(currentUserUid);
+                await userDocRef.set({
+                    lastAccess: firebase.firestore.FieldValue.serverTimestamp(),
+                    appVersion: '0.1.0',
+                    email: user.email || null, // Store email if available (for Google Sign-In)
+                    displayName: user.displayName || null // Store display name if available
+                }, { merge: true });
 
-        // --- Set default date for daily reading input ---
-        const today = new Date();
-        // document.getElementById('reading-date').value = formatDateForFirestore(today); // Handled by Flatpickr now
+                console.log("User document created/updated in Firestore.");
 
-        // --- Attach Event Listeners ---
-        document.getElementById('save-reading-btn').addEventListener('click', saveDailyReading);
-        document.getElementById('official-bill-header').addEventListener('click', toggleOfficialBillCard);
-        document.getElementById('generate-official-bill-btn').addEventListener('click', confirmGenerateOfficialBill);
+                // Update UI for signed-in user
+                authStatusElement.textContent = `Signed in as: ${user.displayName || user.email || 'Anonymous'}`;
+                googleSignInBtn.classList.add('hidden');
+                anonymousSignInBtn.classList.add('hidden');
+                signOutBtn.classList.remove('hidden');
+                mainAppContent.classList.remove('hidden'); // Show main app content
+                statusMessageElement.textContent = "Firebase connected and user authenticated! Ready for data entry.";
 
-        // --- Initial data display and calculations ---
-        await displayLatestReadingAndUnitsConsumed();
-        await calculateAndDisplayEstimatedBill();
+                if (localStorage.getItem('hasAnonymousData') === 'true' && !user.isAnonymous) {
+                    console.log("Previously anonymous user now signed in with Google. Data migration (if necessary) would happen here.");
+                    localStorage.removeItem('hasAnonymousData');
+                }
+
+                isExplicitlySigningOut = false;
+
+                // Initial data display and calculations (after user is authenticated)
+                await displayLatestReadingAndUnitsConsumed();
+                await calculateAndDisplayEstimatedBill();
+
+            } else {
+                // User is signed out or not authenticated.
+                currentUserUid = null;
+                console.log("Auth state changed. No user signed in.");
+
+                // Show authentication options and hide main app content
+                mainAppContent.classList.add('hidden'); // Hide main app content
+                googleSignInBtn.classList.remove('hidden');
+                anonymousSignInBtn.classList.remove('hidden');
+                signOutBtn.classList.add('hidden');
+                authStatusElement.textContent = "Please sign in or continue anonymously.";
+                statusMessageElement.textContent = "Firebase connected. Waiting for user sign-in.";
+
+                // Reset the flag regardless
+                isExplicitlySigningOut = false;
+            }
+        });
+
+        // --- Attach Event Listeners for main app functionality ---
+        // These are attached here because they rely on `db` and `currentUserUid` being available,
+        // which are set after Firebase initialization and auth state is known.
+        const saveReadingBtn = document.getElementById('save-reading-btn');
+        if (saveReadingBtn) saveReadingBtn.addEventListener('click', saveDailyReading);
+
+        const officialBillHeader = document.getElementById('official-bill-header');
+        if (officialBillHeader) officialBillHeader.addEventListener('click', toggleOfficialBillCard);
+
+        const generateOfficialBillBtn = document.getElementById('generate-official-bill-btn');
+        if (generateOfficialBillBtn) generateOfficialBillBtn.addEventListener('click', confirmGenerateOfficialBill);
 
     } catch (error) {
-        console.error("Error during Firebase initialization or anonymous sign-in:", error);
+        console.error("Error during Firebase initialization:", error);
         statusMessageElement.textContent = "Failed to connect to Firebase. Please check your internet connection and Firebase project setup.";
+        // Ensure main app content remains hidden on initialization error
+        mainAppContent.classList.add('hidden');
+        googleSignInBtn.classList.remove('hidden');
+        anonymousSignInBtn.classList.remove('hidden');
+        signOutBtn.classList.add('hidden');
     }
 }
 
-// Initialize Flatpickr for date inputs (added this block)
+// Initialize Flatpickr for date inputs and start Firebase initialization
 document.addEventListener('DOMContentLoaded', () => {
-    flatpickr("#reading-date", {
+    // Flatpickr initialization
+    const readingDateFlatpickr = flatpickr("#reading-date", {
         dateFormat: "d-m-Y", // Display and input as DD-MM-YYYY
         allowInput: true // Allows manual typing
     });
@@ -148,11 +226,93 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Set default date for daily reading input using Flatpickr instance
     const today = new Date();
-    const readingDateFlatpickr = document.getElementById('reading-date')._flatpickr;
     if (readingDateFlatpickr) {
         readingDateFlatpickr.setDate(today, true); // Set today's date, true to trigger change event
     }
+
+    // --- Get DOM element references for authentication/status ---
+    const statusMessageElement = document.getElementById('status-message');
+    const authStatusElement = document.getElementById('auth-status');
+    const googleSignInBtn = document.getElementById('google-sign-in-btn');
+    const anonymousSignInBtn = document.getElementById('anonymous-sign-in-btn');
+    const signOutBtn = document.getElementById('sign-out-btn');
+    const mainAppContent = document.getElementById('main-app-content');
+
+    // Check if all critical elements are found before proceeding
+    if (!statusMessageElement || !authStatusElement || !googleSignInBtn || !anonymousSignInBtn || !signOutBtn || !mainAppContent) {
+        console.error("CRITICAL ERROR: One or more required DOM elements for authentication/status not found. Please ensure all IDs are correct in index.html.");
+        // Provide user feedback if possible, even if main elements are missing
+        if (statusMessageElement) {
+            statusMessageElement.textContent = "Error: UI elements missing. Check console.";
+        }
+        return; // Exit if critical elements are missing
+    }
+
+    // Now, initialize Firebase, passing the elements
+    initializeFirebaseAndAuth({ statusMessageElement, authStatusElement, googleSignInBtn, anonymousSignInBtn, signOutBtn, mainAppContent });
 });
+
+
+// --- AUTHENTICATION FUNCTIONS ---
+
+async function signInWithGoogle() {
+    if (!auth) {
+        console.error("Firebase Auth not initialized.");
+        const authStatusElement = document.getElementById('auth-status'); // Get element again in case function is called standalone
+        if (authStatusElement) authStatusElement.textContent = "Error: Firebase Auth not ready. Try refreshing.";
+        return;
+    }
+    const provider = new firebase.auth.GoogleAuthProvider();
+    try {
+        await auth.signInWithPopup(provider);
+        console.log("Signed in with Google successfully!");
+        // onAuthStateChanged will handle UI updates and data migration
+    } catch (error) {
+        console.error("Error signing in with Google:", error);
+        const authStatusElement = document.getElementById('auth-status');
+        if (authStatusElement) authStatusElement.textContent = `Google Sign-In failed: ${error.message}`;
+    }
+}
+
+// Function: Explicit Anonymous Sign-In
+async function signInAnonymouslyExplicitly() {
+    if (!auth) {
+        console.error("Firebase Auth not initialized.");
+        const authStatusElement = document.getElementById('auth-status');
+        if (authStatusElement) authStatusElement.textContent = "Error: Firebase Auth not ready. Try refreshing.";
+        return;
+    }
+    try {
+        await auth.signInAnonymously();
+        console.log("Explicitly signed in anonymously.");
+        localStorage.setItem('hasAnonymousData', 'true'); // Mark that anonymous data exists
+        // onAuthStateChanged will handle UI updates
+    } catch (error) {
+        console.error("Error signing in anonymously:", error);
+        const authStatusElement = document.getElementById('auth-status');
+        if (authStatusElement) authStatusElement.textContent = `Anonymous Sign-In failed: ${error.message}`;
+    }
+}
+
+async function signOutUser() {
+    if (!auth) {
+        console.error("Firebase Auth not initialized.");
+        const authStatusElement = document.getElementById('auth-status');
+        if (authStatusElement) authStatusElement.textContent = "Error: Firebase Auth not ready. Try refreshing.";
+        return;
+    }
+    isExplicitlySigningOut = true; // Set the flag before signing out
+    try {
+        await auth.signOut();
+        console.log("User signed out successfully.");
+        // onAuthStateChanged will handle UI updates and present options
+    } catch (error) {
+        console.error("Error signing out:", error);
+        const authStatusElement = document.getElementById('auth-status');
+        if (authStatusElement) authStatusElement.textContent = `Sign Out failed: ${error.message}`;
+        isExplicitlySigningOut = false; // Reset if signOut fails
+    }
+}
 
 
 // Toggle the visibility of the official bill card content
@@ -160,14 +320,18 @@ function toggleOfficialBillCard() {
     const content = document.getElementById('official-bill-content');
     const icon = document.getElementById('official-bill-toggle-icon');
 
-    if (content.classList.contains('hidden')) {
-        content.classList.remove('hidden');
-        icon.classList.remove('fa-chevron-down');
-        icon.classList.add('fa-chevron-up');
+    if (content && icon) {
+        if (content.classList.contains('hidden')) {
+            content.classList.remove('hidden');
+            icon.classList.remove('fa-chevron-down');
+            icon.classList.add('fa-chevron-up');
+        } else {
+            content.classList.add('hidden');
+            icon.classList.remove('fa-chevron-up');
+            icon.classList.add('fa-chevron-down');
+        }
     } else {
-        content.classList.add('hidden');
-        icon.classList.remove('fa-chevron-up');
-        icon.classList.add('fa-chevron-down');
+        console.warn("Official bill card elements not found for toggling.");
     }
 }
 
@@ -201,6 +365,12 @@ async function saveDailyReading() {
     const readingDateInput = document.getElementById('reading-date');
     const meterReadingInput = document.getElementById('meter-reading');
     const feedbackElement = document.getElementById('daily-reading-feedback');
+
+    if (!readingDateInput || !meterReadingInput || !feedbackElement) {
+        console.error("Daily reading input elements not found.");
+        if (feedbackElement) feedbackElement.textContent = "Error: Missing input elements.";
+        return;
+    }
 
     const date = readingDateInput.value;
     const dateForFirestore = parseDateFromDDMMYYYY(date); // Convert input date to YYYY-MM-DD
@@ -287,6 +457,11 @@ async function displayLatestReadingAndUnitsConsumed() {
     const latestReadingValueElement = document.getElementById('latest-reading-value');
     const unitsConsumedDailyElement = document.getElementById('units-consumed-daily');
 
+    if (!latestReadingDateElement || !latestReadingValueElement || !unitsConsumedDailyElement) {
+        console.warn("Elements for latest reading display not found.");
+        return;
+    }
+
     if (!db || !currentUserUid) {
         console.error("Firestore DB or User UID not available for fetching latest reading.");
         return;
@@ -295,7 +470,7 @@ async function displayLatestReadingAndUnitsConsumed() {
     const { latest, previous } = await getLatestTwoReadings();
 
     if (latest) {
-        latestReadingDateElement.textContent = formatDateForDisplay(latest.date); // Use new format function
+        latestReadingDateElement.textContent = formatDateForDisplay(latest.date);
         latestReadingValueElement.textContent = latest.reading;
         console.log("Latest reading displayed:", latest);
 
@@ -318,6 +493,10 @@ async function displayLatestReadingAndUnitsConsumed() {
 // Function to display consumption warnings based on units in cycle
 function displayConsumptionWarnings(unitsInCycle) {
     const warningElement = document.getElementById('consumption-warning');
+    if (!warningElement) {
+        console.warn("Consumption warning element not found.");
+        return;
+    }
     warningElement.textContent = ''; // Clear previous warnings
     warningElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center'; // Reset classes
 
@@ -327,15 +506,22 @@ function displayConsumptionWarnings(unitsInCycle) {
         return;
     }
 
+    // New granular warning logic
     if (unitsInCycle >= 500) {
-        warningElement.textContent = `CRITICAL WARNING: Your current cycle usage (${unitsInCycle} units) is at or above 500 units! Consumption beyond this point becomes very expensive.`;
-        warningElement.classList.add('bg-red-800', 'text-red-100', 'font-bold');
+        warningElement.textContent = `CRITICAL ALERT: Your current cycle usage (${unitsInCycle} units) is at or above 500 units. Consumption beyond this point becomes very expensive!`;
+        warningElement.classList.add('bg-red-700', 'text-red-100', 'font-bold');
+    } else if (unitsInCycle >= 450) {
+        warningElement.textContent = `VERY HIGH WARNING: Your current cycle usage (${unitsInCycle} units) is significantly high. You are very close to the 500+ unit slab!`;
+        warningElement.classList.add('bg-red-600', 'text-red-100');
     } else if (unitsInCycle >= 400) {
-        warningElement.textContent = `MAJOR WARNING: Your current cycle usage (${unitsInCycle} units) is approaching 500 units. Be mindful, as the next slab is significantly more expensive.`;
-        warningElement.classList.add('bg-orange-600', 'text-orange-100');
-    } else if (unitsInCycle >= 300) {
-        warningElement.textContent = `WARNING: Your current cycle usage (${unitsInCycle} units) is above 300. Keep an eye on your consumption!`;
-        warningElement.classList.add('bg-yellow-600', 'text-yellow-100');
+        warningElement.textContent = `NOTABLE WARNING: Your current cycle usage (${unitsInCycle} units) is in the 400s. Be cautious, the next slab is costly.`;
+        warningElement.classList.add('bg-orange-500', 'text-orange-100');
+    } else if (unitsInCycle >= 380) { // Close to 400
+        warningElement.textContent = `SIMPLE WARNING: Your current cycle usage (${unitsInCycle} units) is approaching 400 units. Keep an eye on it.`;
+        warningElement.classList.add('bg-yellow-500', 'text-yellow-900');
+    } else if (unitsInCycle >= 300) { // Early 300s
+        warningElement.textContent = `MINIMAL WARNING: Your current cycle usage (${unitsInCycle} units) is in the 300s. Monitor your consumption.`;
+        warningElement.classList.add('bg-yellow-400', 'text-yellow-900');
     } else {
         warningElement.textContent = `Your current cycle usage (${unitsInCycle} units) is within normal limits. Keep up the good work!`;
         warningElement.classList.add('bg-green-700', 'text-green-100');
@@ -353,6 +539,16 @@ async function calculateAndDisplayEstimatedBill() {
     const meterRentElement = document.getElementById('meter-rent');
     const billOtherChargesElement = document.getElementById('bill-other-charges');
     const estimatedBillFeedbackElement = document.getElementById('estimated-bill-feedback');
+
+    const elements = [billCycleDatesElement, estimatedUnitsInCycleElement, estimatedBillAmountElement,
+        fixedChargeElement, energyChargeElement, meterRentElement,
+        billOtherChargesElement, estimatedBillFeedbackElement];
+
+    if (elements.some(el => !el)) {
+        console.error("One or more estimated bill display elements not found.");
+        if (estimatedBillFeedbackElement) estimatedBillFeedbackElement.textContent = "Error: Missing display elements.";
+        return;
+    }
 
     estimatedBillFeedbackElement.textContent = '';
     estimatedBillFeedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100'; // Default error style
@@ -462,8 +658,8 @@ async function calculateAndDisplayEstimatedBill() {
             .doc(currentUserUid)
             .collection('daily_readings')
             .where('date', '>=', estimatedCycleStartDateString)
-            .where('date', '<=', endDateForUnitsCalculation) // Use the dynamic end date
-            .orderBy('date', 'desc') // Get the latest reading in this period
+            .where('date', '<=', endDateForUnitsCalculation)
+            .orderBy('date', 'desc')
             .limit(1)
             .get();
 
@@ -473,9 +669,7 @@ async function calculateAndDisplayEstimatedBill() {
             console.log("Last reading in estimated cycle found:", lastReadingInEstimatedCycle);
         } else {
             console.log("No readings found in the current estimated cycle up to the calculated end date.");
-            // If no readings are found between start and end, it means either no readings at all,
-            // or all readings are before the estimatedCycleStartDateString.
-            // In this case, totalUnitsInCycle should be 0.
+            totalUnitsInCycle = 0; // Set to 0 if no readings within the current cycle
             estimatedUnitsInCycleElement.textContent = '0';
             estimatedBillAmountElement.textContent = '0.00';
             fixedChargeElement.textContent = '0.00';
@@ -483,18 +677,15 @@ async function calculateAndDisplayEstimatedBill() {
             meterRentElement.textContent = '0.00';
             billOtherChargesElement.textContent = 'Other Charges: ₹0.00';
             estimatedBillFeedbackElement.textContent = 'No units recorded in current cycle yet.';
-            estimatedBillFeedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-yellow-800 text-yellow-100'; // Warning style
-            displayConsumptionWarnings(0); // Display warning for 0 units
+            estimatedBillFeedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-yellow-800 text-yellow-100';
+            displayConsumptionWarnings(0);
             console.log("--- Exiting calculateAndDisplayEstimatedBill (No readings in current cycle for calculation) ---");
             return;
         }
 
         let totalUnitsInCycle = 0;
-        // Calculate units only if we have a valid start reading and a latest reading in the cycle
         if (lastReadingInEstimatedCycle) {
             totalUnitsInCycle = lastReadingInEstimatedCycle.reading - startReadingForEstimatedCycle;
-
-            // Ensure units are not negative if data entry error occurs or initial reading is higher than start reading
             if (totalUnitsInCycle < 0) {
                 console.warn(`Negative units calculated (${totalUnitsInCycle}). This might indicate data entry error (current reading ${lastReadingInEstimatedCycle.reading} is less than start reading ${startReadingForEstimatedCycle}). Resetting to 0.`);
                 totalUnitsInCycle = 0;
@@ -503,7 +694,7 @@ async function calculateAndDisplayEstimatedBill() {
         }
 
         estimatedUnitsInCycleElement.textContent = totalUnitsInCycle;
-        displayConsumptionWarnings(totalUnitsInCycle); // Call warning display with units in cycle
+        displayConsumptionWarnings(totalUnitsInCycle);
 
         // --- Send units to Flask backend for calculation ---
         console.log("Sending units to Flask for calculation:", totalUnitsInCycle);
@@ -528,7 +719,6 @@ async function calculateAndDisplayEstimatedBill() {
         energyChargeElement.textContent = billCalculationResult.energy_charge.toFixed(2);
         meterRentElement.textContent = billCalculationResult.meter_rent.toFixed(2);
 
-        // Calculate other charges by summing up remaining components
         const otherCharges = billCalculationResult.electricity_duty +
             billCalculationResult.fuel_surcharge +
             billCalculationResult.fc_subsidy +
@@ -537,21 +727,20 @@ async function calculateAndDisplayEstimatedBill() {
 
 
         estimatedBillFeedbackElement.textContent = 'Estimated bill updated.';
-        estimatedBillFeedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-green-800 text-green-100'; // Success style
+        estimatedBillFeedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-green-800 text-green-100';
         console.log("--- Finished calculateAndDisplayEstimatedBill successfully ---");
 
     } catch (error) {
         console.error("Error calculating or displaying estimated bill:", error);
         estimatedBillFeedbackElement.textContent = `Error calculating bill: ${error.message}`;
-        estimatedBillFeedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100'; // Error style
-        // Reset fields on error
+        estimatedBillFeedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100';
         estimatedUnitsInCycleElement.textContent = '--';
         estimatedBillAmountElement.textContent = '0.00';
         fixedChargeElement.textContent = '0.00';
         energyChargeElement.textContent = '0.00';
         meterRentElement.textContent = '0.00';
         billOtherChargesElement.textContent = 'Other Charges: ₹0.00';
-        displayConsumptionWarnings(0); // Display default warning on error
+        displayConsumptionWarnings(0);
         console.log("--- Exiting calculateAndDisplayEstimatedBill (with error) ---");
     }
 }
@@ -561,17 +750,23 @@ async function calculateAndDisplayEstimatedBill() {
 // Function to confirm before generating official bill
 async function confirmGenerateOfficialBill() {
     const feedbackElement = document.getElementById('official-bill-feedback');
-    feedbackElement.textContent = '';
-    feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100'; // Default error style
-
     const officialBillEndDateInput = document.getElementById('official-bill-end-date');
     const actualBillAmountInput = document.getElementById('actual-bill-amount');
-    const userCommentInput = document.getElementById('user-comment'); // Get comment input here
+    const userCommentInput = document.getElementById('user-comment');
+
+    if (!feedbackElement || !officialBillEndDateInput || !actualBillAmountInput || !userCommentInput) {
+        console.error("Official bill input/feedback elements not found.");
+        if (feedbackElement) feedbackElement.textContent = "Error: Missing input/feedback elements.";
+        return;
+    }
+
+    feedbackElement.textContent = '';
+    feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100';
 
     const billEndDate = officialBillEndDateInput.value;
-    const billEndDateForFirestore = parseDateFromDDMMYYYY(billEndDate); // Convert input date to YYYY-MM-DD
+    const billEndDateForFirestore = parseDateFromDDMMYYYY(billEndDate);
     const actualAmount = parseFloat(actualBillAmountInput.value);
-    const userComment = userCommentInput.value || ''; // Get comment value here
+    const userComment = userCommentInput.value || '';
 
     // Basic validation for official bill inputs
     if (!billEndDate) {
@@ -587,13 +782,12 @@ async function confirmGenerateOfficialBill() {
     showConfirmationModal(
         'Finalize Official Bill?',
         'This will finalize the bi-monthly bill record. DO NOT proceed if the KSEB bill has not been received. If a bill already exists for this date, it will be overwritten. Are you sure you want to continue?',
-        async () => { // On Confirm (Yes)
-            // Pass the input elements for clearing later
+        async () => {
             await generateOfficialBill(billEndDateForFirestore, actualAmount, userComment, officialBillEndDateInput, actualBillAmountInput, userCommentInput);
         },
-        () => { // On Cancel (Go Back)
+        () => {
             feedbackElement.textContent = 'Official bill finalization cancelled.';
-            feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-yellow-800 text-yellow-100'; // Cancellation style
+            feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-yellow-800 text-yellow-100';
         }
     );
 }
@@ -602,8 +796,19 @@ async function confirmGenerateOfficialBill() {
 // Function to generate and save official bill
 async function generateOfficialBill(billEndDate, actualAmount, userComment, officialBillEndDateInput, actualBillAmountInput, userCommentInput) {
     const feedbackElement = document.getElementById('official-bill-feedback');
+    const estimatedBillAmountElement = document.getElementById('estimated-bill-amount'); // Ensure this is available for comparison
+    const estimatedVsActualElement = document.getElementById('estimated-vs-actual');
+    const previousBillComparisonElement = document.getElementById('previous-bill-comparison');
+    const averageBillComparisonElement = document.getElementById('average-bill-comparison');
+
+    if (!feedbackElement || !estimatedBillAmountElement || !estimatedVsActualElement || !previousBillComparisonElement || !averageBillComparisonElement) {
+        console.error("One or more official bill comparison/feedback elements not found.");
+        if (feedbackElement) feedbackElement.textContent = "Error: Missing display elements for official bill comparison.";
+        return;
+    }
+
     feedbackElement.textContent = 'Calculating and saving official bill...';
-    feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-blue-800 text-blue-100'; // Info style
+    feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-blue-800 text-blue-100';
     console.log("\n--- Starting generateOfficialBill ---");
     console.log(`Attempting to finalize bill for date: ${billEndDate}, Actual Amount: ${actualAmount}`);
 
@@ -617,25 +822,23 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
             .limit(1)
             .get();
         if (!previousOfficialBillSnapshot.empty) {
-            previousOfficialBillEndDate = previousOfficialBillSnapshot.docs[0].data().billing_cycle_end_date;
+            const lastOfficialBillData = previousOfficialBillSnapshot.docs[0].data();
+            previousOfficialBillEndDate = lastOfficialBillData.billing_cycle_end_date;
             console.log("Previous official bill end date found:", previousOfficialBillEndDate);
         } else {
             console.log("No previous official bills found.");
         }
 
         // Determine the start date of the current official billing cycle
-        // If no previous bill, assume readings from the very first recorded daily reading.
-        // Otherwise, it's the day after the previous official bill's end date.
         let currentCycleStartDate;
-        let startMeterReading = 0; // Will be updated if readings found
+        let startMeterReading = 0;
 
         if (previousOfficialBillEndDate) {
             const prevDate = new Date(previousOfficialBillEndDate);
-            prevDate.setDate(prevDate.getDate() + 1); // Day after previous bill ended
+            prevDate.setDate(prevDate.getDate() + 1);
             currentCycleStartDate = formatDateForFirestore(prevDate);
             console.log("Official Bill Cycle Start Date (from previous bill):", currentCycleStartDate);
 
-            // Get the meter reading for the previous official bill's end date
             const prevBillEndReadingDoc = await db.collection('users')
                 .doc(currentUserUid)
                 .collection('daily_readings')
@@ -646,14 +849,13 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
                 console.log("Start Meter Reading (from prev bill end date):", startMeterReading);
             } else {
                 feedbackElement.textContent = 'Error: Could not find meter reading for previous official bill end date. Please ensure you have a reading for that date.';
-                feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100'; // Error style
+                feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100';
                 console.error("Missing daily reading for previous official bill end date:", previousOfficialBillEndDate);
                 console.log("--- Exiting generateOfficialBill (Missing prev reading) ---");
                 return;
             }
 
         } else {
-            // No previous official bill, find the very first daily reading
             const firstDailyReadingSnapshot = await db.collection('users')
                 .doc(currentUserUid)
                 .collection('daily_readings')
@@ -667,7 +869,7 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
                 console.log("Start Meter Reading (from first daily reading):", startMeterReading);
             } else {
                 feedbackElement.textContent = 'Error: No daily readings found to finalize bill. Please add some daily readings first.';
-                feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100'; // Error style
+                feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100';
                 console.error("No daily readings found for initial bill finalization.");
                 console.log("--- Exiting generateOfficialBill (No daily readings) ---");
                 return;
@@ -684,7 +886,7 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
 
         if (!endMeterReadingDoc.exists) {
             feedbackElement.textContent = `Error: No daily reading found for official bill end date (${formatDateForDisplay(billEndDate)}). Please record it.`;
-            feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100'; // Error style
+            feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100';
             console.error("Missing daily reading for current official bill end date:", billEndDate);
             console.log("--- Exiting generateOfficialBill (Missing current reading) ---");
             return;
@@ -698,7 +900,7 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
 
         if (unitsConsumedOfficial < 0) {
             feedbackElement.textContent = 'Error: Units consumed for official bill is negative. Check meter readings or bill end date.';
-            feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100'; // Error style
+            feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100';
             console.error("Negative units calculated for official bill.");
             console.log("--- Exiting generateOfficialBill (Negative units) ---");
             return;
@@ -719,7 +921,6 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
         console.log("Calculated bill details from Flask:", calculatedBillDetails);
 
         // 5. Save the official bill record to Firestore
-        // Using doc(billEndDate).set({ merge: true }) allows overwriting existing records for that date.
         console.log("Saving official bill to Firestore for date:", billEndDate);
         const officialBillDocRef = db.collection('users')
             .doc(currentUserUid)
@@ -740,14 +941,14 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
             calculated_fc_subsidy: calculatedBillDetails.fc_subsidy,
             calculated_ec_subsidy: calculatedBillDetails.ec_subsidy,
             total_calculated_bill: calculatedBillDetails.total_bill,
-            kseb_bill_amount: actualAmount, // Actual amount from user input
+            kseb_bill_amount: actualAmount,
             user_comment: userComment,
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
         });
         console.log("Official bill saved successfully.");
 
         // 6. Perform Comparisons and Display Results
-        const estimatedBillAmount = parseFloat(document.getElementById('estimated-bill-amount').textContent); // From "Estimated Bill So Far" card
+        const estimatedBillAmount = parseFloat(estimatedBillAmountElement.textContent);
         const actualBillAmount = actualAmount;
         console.log(`Comparing Estimated Bill (from display): ₹${estimatedBillAmount} with Actual Bill: ₹${actualBillAmount}`);
 
@@ -762,7 +963,7 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
         } else if (!isNaN(estimatedBillAmount)) {
             const diff = actualBillAmount - estimatedBillAmount;
             const percentageDiff = (diff / estimatedBillAmount) * 100;
-            if (Math.abs(percentageDiff) < 5) { // Within 5%
+            if (Math.abs(percentageDiff) < 5) {
                 estimatedVsActualText = `Yay! Your actual bill (₹${actualBillAmount.toFixed(2)}) was almost correct compared to estimate (₹${estimatedBillAmount.toFixed(2)})!`;
             } else if (diff > 0) {
                 estimatedVsActualText = `Your actual bill (₹${actualBillAmount.toFixed(2)}) was ${Math.abs(percentageDiff).toFixed(2)}% HIGHER than estimated (₹${estimatedBillAmount.toFixed(2)}).`;
@@ -770,7 +971,7 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
                 estimatedVsActualText = `Your actual bill (₹${actualBillAmount.toFixed(2)}) was ${Math.abs(percentageDiff).toFixed(2)}% LOWER than estimated (₹${estimatedBillAmount.toFixed(2)}).`;
             }
         }
-        document.getElementById('estimated-vs-actual').textContent = estimatedVsActualText;
+        estimatedVsActualElement.textContent = estimatedVsActualText;
 
         // Comparison 2: Current vs Previous Official Bill
         let previousBillComparisonText = '';
@@ -800,8 +1001,8 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
         } else {
             previousBillComparisonText = 'No previous official bill record found for comparison.';
         }
-        document.getElementById('previous-bill-comparison').textContent = previousBillComparisonText;
-        document.getElementById('previous-bill-comparison').classList.add('whitespace-normal'); // Ensure wrapping
+        previousBillComparisonElement.textContent = previousBillComparisonText;
+        previousBillComparisonElement.classList.add('whitespace-normal');
 
         // Comparison 3: Current vs Bi-monthly Average
         let averageBillComparisonText = '';
@@ -835,12 +1036,12 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
         } else {
             averageBillComparisonText = 'No official bills yet to calculate average.';
         }
-        document.getElementById('average-bill-comparison').textContent = averageBillComparisonText;
-        document.getElementById('average-bill-comparison').classList.add('whitespace-normal'); // Ensure wrapping
+        averageBillComparisonElement.textContent = averageBillComparisonText;
+        averageBillComparisonElement.classList.add('whitespace-normal');
 
 
         feedbackElement.textContent = 'Official bill record saved successfully!';
-        feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-green-800 text-green-100'; // Success style
+        feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-green-800 text-green-100';
 
         // Clear inputs after successful save
         officialBillEndDateInput.value = '';
@@ -854,11 +1055,23 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
     } catch (error) {
         console.error("Error generating or saving official bill:", error);
         feedbackElement.textContent = `Error finalizing bill: ${error.message}`;
-        feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100'; // Error style
+        feedbackElement.className = 'text-sm mt-4 p-2 rounded-md whitespace-normal text-center bg-red-800 text-red-100';
+        // Reset relevant elements on error, if they exist
+        const estimatedUnitsInCycleElement = document.getElementById('estimated-units-in-cycle');
+        const estimatedBillAmountElement = document.getElementById('estimated-bill-amount');
+        const fixedChargeElement = document.getElementById('fixed-charge');
+        const energyChargeElement = document.getElementById('energy-charge');
+        const meterRentElement = document.getElementById('meter-rent');
+        const billOtherChargesElement = document.getElementById('bill-other-charges');
+
+        if (estimatedUnitsInCycleElement) estimatedUnitsInCycleElement.textContent = '--';
+        if (estimatedBillAmountElement) estimatedBillAmountElement.textContent = '0.00';
+        if (fixedChargeElement) fixedChargeElement.textContent = '0.00';
+        if (energyChargeElement) energyChargeElement.textContent = '0.00';
+        if (meterRentElement) meterRentElement.textContent = '0.00';
+        if (billOtherChargesElement) billOtherChargesElement.textContent = 'Other Charges: ₹0.00';
+
+        displayConsumptionWarnings(0); // Reset warnings
         console.log("--- Exiting generateOfficialBill (with error) ---");
     }
 }
-
-
-// Run the initialization when the DOM is fully loaded
-document.addEventListener('DOMContentLoaded', initializeFirebaseAndAuth);

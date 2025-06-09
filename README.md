@@ -32,36 +32,6 @@
 - **Previous Bill Comparison**
 - **Average Bill Analysis**
 - **Deviation from Actual Bill**
-# ⚡ KSEB Bill Tracker
-![GitHub last commit](https://img.shields.io/github/last-commit/AkzXrated/KSEB_BILL_TRACKER_APP) 
-![GitHub top language](https://img.shields.io/github/languages/top/AkzXrated/KSEB_BILL_TRACKER_APP)
-![GitHub repo size](https://img.shields.io/github/repo-size/AkzXrated/KSEB_BILL_TRACKER_APP)
-![GitHub contributors](https://img.shields.io/github/contributors/AkzXrated/KSEB_BILL_TRACKER_APP)
-## Your Smart Companion for KSEB Electricity Consumption in Kerala!
-
-KSEB Bill Tracker is a modern, intuitive web application designed to empower KSEB consumers in Kerala to actively monitor their daily electricity usage and estimate their bi-monthly bills. Say goodbye to bill surprises and gain complete control over your energy consumption habits!
-
----
-
-### ✨ Key Features Implemented So Far
-
-We've made significant progress in making your electricity tracking seamless and insightful:
-
-* **Seamless User Authentication:**
-    * **Google Sign-in:** Securely log in using your existing Google account.
-    * **Anonymous Access:** Start tracking quickly without needing to sign in immediately.
-    * Your data is privately stored and managed via Firebase, ensuring security and accessibility.
-* **Intuitive Landing Experience:** A dedicated, clean, and single-column authentication screen provides a focused entry point into the application.
-* **Daily Meter Reading Input:** Easily record your daily meter readings to build a robust history of your consumption.
-* **Real-time Estimated Bill Calculation:** Get an up-to-the-minute estimate of your current bi-monthly bill based on your recorded readings and KSEB's tariff structure.
-* **Comprehensive Bill Comparison & Insights:**
-    * **Previous Bill Comparison:** See how your current usage compares to your last official KSEB bill.
-    * **Average Bill Analysis:** Understand your consumption trends by comparing against your historical average bills.
-    * **Deviation from Actual Bill:** Upon finalization, easily identify any discrepancies between your estimated and actual KSEB bill amounts.
-* **Dynamic User Interface Feedback:** Receive instant, clear notifications and warnings for various actions, ensuring a smooth and informed user experience.
-* **Refined & Responsive Layout:** Enjoy a user-friendly interface that elegantly adapts to different screen sizes, featuring a distinct two-column layout for core tracking, followed by full-width sections for detailed operations.
-
----
 
 ### 🚀 Getting Started
 

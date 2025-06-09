@@ -1,26 +1,77 @@
+# ──────────────────────────────────────────────────────────────────────────────
 # Python virtual environment
 venv/
-.env/
+.env
 
-# Byte-code files
-*.pyc
+# dotenv environment file
+.env.local
+.env.*.local
+
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
 
-# Operating System files
+# Firebase Admin SDK service account key
+firebase_credentials.json
+serviceAccountKey.json
+
+# Flask instance folder & config
+instance/
+.flaskenv
+
+# OS-generated files
 .DS_Store
 Thumbs.db
 
-# IDE and editor files
+# IDE/editor directories and files
 .vscode/
 .idea/
 *.sublime-project
 *.sublime-workspace
 
-# Flask specific (if you had a test or instance folder)
-instance/
-.flaskenv
+# Node modules (if you ever add frontend tooling)
+node_modules/
 
-# Any sensitive data (e.g., if you were to have a service account key JSON file directly in the repo)
-# ONLY IF YOU HAVE THIS FILE IN YOUR REPO ROOT AND IT'S NOT HANDLED VIA ENVIRONMENT VARIABLES.
-# It's better to avoid having it in the repo folder at all.
-# serviceAccountKey.json
+# Logs and databases
+*.log
+*.sqlite3
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyBuilder
+target/
+
+# PyCharm
+*.iml
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# MacOS Finder files
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+

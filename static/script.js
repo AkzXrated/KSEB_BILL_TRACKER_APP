@@ -3,6 +3,8 @@ let db;
 let currentUserUid;
 let auth;
 let isExplicitlySigningOut = false;
+let myChart; // Variable to hold the Daily Chart.js instance
+let myBiMonthlyChart; // Variable to hold the Bi-Monthly Chart.js instance
 
 // Variables to store the latest reading data for validation
 let latestReadingData = null; // Stores { date: 'YYYY-MM-DD', reading: number }
@@ -48,14 +50,37 @@ function hideConfirmationModal() {
     }
 }
 
-// Helper function to format date for display (DD-MM-YYYY)
+// Helper function to format date for display (DD-Mon)
 function formatDateForDisplay(dateString) {
     if (!dateString) return '--/--/----';
     // Ensure dateString is actually a string before splitting
     dateString = String(dateString);
     const [year, month, day] = dateString.split('-');
-    return `${day}-${month}-${year}`;
+
+    const dateObj = new Date(year, parseInt(month) - 1, day); // Month is 0-indexed
+    const options = { day: '2-digit', month: 'short' };
+    return dateObj.toLocaleDateString('en-GB', options); // e.g., 01 May
 }
+
+// Helper function to format month range for bi-monthly chart label (e.g., Jan-March 25)
+function formatMonthYearRangeForDisplay(startDateString, endDateString) {
+    if (!startDateString || !endDateString) return 'N/A';
+
+    const start = new Date(startDateString);
+    const end = new Date(endDateString);
+
+    const startMonth = start.toLocaleDateString('en-GB', { month: 'short' });
+    const endMonth = end.toLocaleDateString('en-GB', { month: 'short' });
+    const endYear = end.toLocaleDateString('en-GB', { year: '2-digit' }); // e.g., 25 for 2025
+
+    // Handle cases where the cycle starts and ends in the same month (e.g., if a cycle spans slightly over a month boundary)
+    if (startMonth === endMonth) {
+        return `${startMonth}-${endYear}`; // e.g., May-25
+    }
+
+    return `${startMonth}-${endMonth} ${endYear}`; // e.g., Jan-March 25
+}
+
 
 // Helper function to format date for Firestore (YYYY-MM-DD)
 function formatDateForFirestore(date) {
@@ -125,6 +150,10 @@ async function initializeFirebaseAndAuth(elements) {
         auth = firebase.auth();
         db = firebase.firestore();
 
+        // Register the zoom plugin globally once
+        Chart.register(ChartZoom);
+        console.log("Chart.js Zoom plugin registered.");
+
         console.log("Firebase initialized successfully!");
 
         // --- Attach Authentication Button Event Listeners NOW ---
@@ -170,6 +199,8 @@ async function initializeFirebaseAndAuth(elements) {
                 // Initial data display and calculations (after user is authenticated)
                 await displayLatestReadingAndUnitsConsumed();
                 await calculateAndDisplayEstimatedBill();
+                await renderDailyConsumptionChart();
+                await renderBiMonthlySummaryChart();
 
             } else {
                 // User is signed out or not authenticated.
@@ -184,14 +215,22 @@ async function initializeFirebaseAndAuth(elements) {
                 authStatusElement.textContent = "Please sign in or continue anonymously.";
                 statusMessageElement.textContent = "Firebase connected. Waiting for user sign-in.";
 
+                // Destroy charts if they exist when user signs out
+                if (myChart) {
+                    myChart.destroy();
+                    myChart = null;
+                }
+                if (myBiMonthlyChart) {
+                    myBiMonthlyChart.destroy();
+                    myBiMonthlyChart = null;
+                }
+
                 // Reset the flag regardless
                 isExplicitlySigningOut = false;
             }
         });
 
         // --- Attach Event Listeners for main app functionality ---
-        // These are attached here because they rely on `db` and `currentUserUid` being available,
-        // which are set after Firebase initialization and auth state is known.
         const saveReadingBtn = document.getElementById('save-reading-btn');
         if (saveReadingBtn) saveReadingBtn.addEventListener('click', saveDailyReading);
 
@@ -200,6 +239,17 @@ async function initializeFirebaseAndAuth(elements) {
 
         const generateOfficialBillBtn = document.getElementById('generate-official-bill-btn');
         if (generateOfficialBillBtn) generateOfficialBillBtn.addEventListener('click', confirmGenerateOfficialBill);
+
+        // NEW: Add event listener for reset zoom button
+        const resetDailyChartZoomBtn = document.getElementById('reset-daily-chart-zoom-btn');
+        if (resetDailyChartZoomBtn) {
+            resetDailyChartZoomBtn.addEventListener('click', () => {
+                if (myChart) {
+                    myChart.resetZoom();
+                    console.log("Daily chart zoom reset.");
+                }
+            });
+        }
 
     } catch (error) {
         console.error("Error during Firebase initialization:", error);
@@ -443,6 +493,8 @@ async function saveDailyReading() {
         // Refresh all displays after saving
         await displayLatestReadingAndUnitsConsumed();
         await calculateAndDisplayEstimatedBill();
+        await renderDailyConsumptionChart();
+        await renderBiMonthlySummaryChart();
 
     } catch (error) {
         console.error("Error saving daily reading:", error);
@@ -519,9 +571,6 @@ function displayConsumptionWarnings(unitsInCycle) {
     } else if (unitsInCycle >= 380) { // Close to 400
         warningElement.textContent = `SIMPLE WARNING: Your current cycle usage (${unitsInCycle} units) is approaching 400 units. Keep an eye on it.`;
         warningElement.classList.add('bg-yellow-500', 'text-yellow-900');
-    } else if (unitsInCycle >= 300) { // Early 300s
-        warningElement.textContent = `MINIMAL WARNING: Your current cycle usage (${unitsInCycle} units) is in the 300s. Monitor your consumption.`;
-        warningElement.classList.add('bg-yellow-400', 'text-yellow-900');
     } else {
         warningElement.textContent = `Your current cycle usage (${unitsInCycle} units) is within normal limits. Keep up the good work!`;
         warningElement.classList.add('bg-green-700', 'text-green-100');
@@ -1050,6 +1099,9 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
 
         // Trigger re-calculation of estimated bill after finalizing an official bill
         await calculateAndDisplayEstimatedBill();
+        await renderDailyConsumptionChart();
+        await renderBiMonthlySummaryChart();
+
         console.log("--- Finished generateOfficialBill successfully ---");
 
     } catch (error) {
@@ -1074,4 +1126,447 @@ async function generateOfficialBill(billEndDate, actualAmount, userComment, offi
         displayConsumptionWarnings(0); // Reset warnings
         console.log("--- Exiting generateOfficialBill (with error) ---");
     }
+}
+
+// --- CHARTING FUNCTIONS ---
+
+/**
+ * Fetches all daily readings for the current user from Firestore, sorted by date ascending.
+ * @returns {Array<Object>} An array of daily reading objects, e.g., [{ date: 'YYYY-MM-DD', reading: number, timestamp: ... }]
+ */
+async function fetchHistoricalDailyReadings() {
+    if (!db || !currentUserUid) {
+        console.error("Firestore DB or User UID not available for fetching historical readings.");
+        return [];
+    }
+    try {
+        const querySnapshot = await db.collection('users')
+            .doc(currentUserUid)
+            .collection('daily_readings')
+            .orderBy('date', 'asc') // Order by date ascending for chronological chart
+            .get();
+        return querySnapshot.docs.map(doc => doc.data());
+    } catch (error) {
+        console.error("Error fetching historical daily readings:", error);
+        return [];
+    }
+}
+
+/**
+ * Processes raw daily readings to calculate daily units consumed, filling in null for missing dates.
+ * This ensures the chart can use spanGaps effectively.
+ * @param {Array<Object>} readings - Array of reading objects from Firestore.
+ * @returns {Object} An object containing processedData (Array of objects with date and units consumed) and averageUnits.
+ */
+function processDailyReadingsForChart(readings) {
+    if (readings.length === 0) {
+        return { processedData: [], averageUnits: 0 };
+    }
+
+    // Sort readings by date just in case they are not perfectly sorted
+    readings.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    const readingsMap = new Map(readings.map(r => [r.date, r.reading]));
+
+    const chartLabels = [];
+    const chartUnits = [];
+    let cumulativeUnitsSum = 0;
+    let validConsumptionDays = 0;
+
+    // Determine the date range for the chart (from the first recorded reading to today)
+    const firstRecordedDate = new Date(readings[0].date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Normalize today's date to midnight
+
+    let iterDate = new Date(firstRecordedDate);
+    let lastKnownReading = null; // To store the last valid reading encountered
+
+    // Find the very first actual reading to initialize lastKnownReading
+    if (readings.length > 0) {
+        lastKnownReading = readings[0].reading; // The first reading itself
+    }
+
+    while (iterDate <= today) {
+        const iterDateFormatted = formatDateForFirestore(iterDate);
+        chartLabels.push(formatDateForDisplay(iterDateFormatted));
+
+        const currentReading = readingsMap.get(iterDateFormatted);
+
+        if (currentReading !== undefined) {
+            // If we have a reading for this date
+            if (lastKnownReading !== null) {
+                // Calculate consumption from the last known reading
+                const unitsConsumed = currentReading - lastKnownReading;
+                if (unitsConsumed >= 0) {
+                    chartUnits.push(unitsConsumed);
+                    cumulativeUnitsSum += unitsConsumed;
+                    validConsumptionDays++;
+                } else {
+                    // Negative consumption, treat as invalid/missing
+                    chartUnits.push(null);
+                }
+            } else {
+                // This branch will be hit only if `readings.length > 0` but `lastKnownReading`
+                // somehow became `null` after initialization, or if `readings[0].reading` was initially invalid.
+                // For the very first data point in `chartUnits` (i.e. if chartUnits is empty),
+                // we set consumption to 0 as there's no prior point to compare.
+                chartUnits.push(0); // Consumption for the first point is 0
+            }
+            lastKnownReading = currentReading; // Update last known reading to the current actual reading
+        } else {
+            // No reading for this date, push null
+            chartUnits.push(null);
+        }
+
+        iterDate.setDate(iterDate.getDate() + 1); // Move to the next day
+    }
+
+    const averageUnits = validConsumptionDays > 0 ? cumulativeUnitsSum / validConsumptionDays : 0;
+
+    const finalProcessedData = chartLabels.map((label, index) => ({
+        date: label,
+        units: chartUnits[index]
+    }));
+
+    return { processedData: finalProcessedData, averageUnits: averageUnits };
+}
+
+
+/**
+ * Renders the daily electricity consumption chart using Chart.js.
+ */
+async function renderDailyConsumptionChart() {
+    console.log("Attempting to render daily consumption chart...");
+    const canvas = document.getElementById('dailyConsumptionChart');
+    const noDataMessage = document.getElementById('chart-no-data-message');
+
+    if (!canvas || !noDataMessage) {
+        console.warn("Daily chart canvas or no-data message element not found.");
+        return;
+    }
+
+    const historicalReadings = await fetchHistoricalDailyReadings();
+    const { processedData, averageUnits } = processDailyReadingsForChart(historicalReadings);
+
+    // FIX: Changed condition to be less strict. Chart will render if there are at least two non-null data points.
+    // This allows for zero consumption points and gaps to be shown.
+    const hasEnoughValidData = processedData.filter(d => d.units !== null).length >= 2;
+
+    if (!hasEnoughValidData) {
+        noDataMessage.classList.remove('hidden'); // Show no data message
+        if (myChart) {
+            myChart.destroy(); // Destroy existing chart if no data
+            myChart = null;
+        }
+        console.log("Not enough valid data (at least two non-null points) to render daily chart.");
+        return;
+    } else {
+        noDataMessage.classList.add('hidden'); // Hide no data message
+    }
+
+    const labels = processedData.map(data => data.date);
+    const units = processedData.map(data => data.units);
+
+    const ctx = canvas.getContext('2d');
+
+    // Destroy existing chart instance if it exists to prevent overlap
+    if (myChart) {
+        myChart.destroy();
+    }
+
+    myChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Daily Units Consumed',
+                data: units,
+                borderColor: '#60a5fa', // Tailwind blue-500
+                backgroundColor: 'rgba(96, 165, 250, 0.2)', // Slightly transparent fill
+                tension: 0.4,
+                fill: true,
+                pointBackgroundColor: '#60a5fa',
+                pointBorderColor: '#fff',
+                pointHoverBackgroundColor: '#fff',
+                pointHoverBorderColor: '#60a5fa',
+                spanGaps: true // Enable gap spanning for smoother lines
+            },
+            {
+                label: 'Average Daily Consumption',
+                data: Array(labels.length).fill(averageUnits), // Flat line at average
+                borderColor: '#FFA500', // Solid orange color
+                backgroundColor: 'transparent', // Make background transparent for solid line
+                tension: 0, // Keep tension at 0 for a straight average line
+                fill: false,
+                borderDash: [], // Make the line solid by removing the dash pattern
+                pointRadius: 0, // No points for the average line
+                pointHoverRadius: 0,
+                borderWidth: 2 // Make it slightly thicker for visibility
+            }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false, // Allows the chart to fill the parent container's size
+            plugins: {
+                legend: {
+                    labels: {
+                        color: '#cbd5e1' // text-gray-300
+                    }
+                },
+                title: {
+                    display: true,
+                    text: 'Daily Electricity Consumption Over Time',
+                    color: '#ffffff' // text-white
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                label += context.parsed.y.toFixed(2) + ' units';
+                            }
+                            return label;
+                        }
+                    }
+                },
+                zoom: {
+                    pan: {
+                        enabled: true, // Enable panning
+                        mode: 'x', // Pan only along the X-axis (dates)
+                        threshold: 10, // Minimum pan distance required
+                    },
+                    zoom: {
+                        wheel: {
+                            enabled: true, // Enable zooming with mouse wheel
+                        },
+                        pinch: {
+                            enabled: true // Enable zooming with pinch gestures (for touch devices)
+                        },
+                        mode: 'x', // Zoom only along the X-axis (dates)
+                    },
+                    // Optional: Callbacks for when zoom/pan starts/ends
+                    // onZoomComplete: ({chart}) => console.log('Zoom complete'),
+                    // onPanComplete: ({chart}) => console.log('Pan complete'),
+                }
+            },
+            scales: {
+                x: {
+                    type: 'category', // Use 'category' for date strings
+                    title: {
+                        display: true,
+                        text: 'Date',
+                        color: '#94a3b8' // text-gray-400
+                    },
+                    grid: {
+                        color: 'rgba(100, 116, 139, 0.2)' // slate-500 with opacity
+                    },
+                    ticks: {
+                        color: '#cbd5e1', // text-gray-300
+                        autoSkip: true, // Automatically skip labels to prevent overlap
+                        maxRotation: 45, // Rotate labels for better readability if needed
+                        minRotation: 0
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Units Consumed',
+                        color: '#94a3b8' // text-gray-400
+                    },
+                    beginAtZero: true,
+                    grid: {
+                        color: 'rgba(100, 116, 139, 0.2)'
+                    },
+                    ticks: {
+                        color: '#cbd5e1' // text-gray-300
+                    }
+                }
+            }
+        }
+    });
+    console.log("Daily consumption chart rendered with average line and zoom enabled.");
+}
+
+// Fetches all official bills for the current user from Firestore.
+async function fetchHistoricalOfficialBills() {
+    if (!db || !currentUserUid) {
+        console.error("Firestore DB or User UID not available for fetching official bills.");
+        return [];
+    }
+    try {
+        const querySnapshot = await db.collection('users')
+            .doc(currentUserUid)
+            .collection('official_bills')
+            .orderBy('billing_cycle_end_date', 'asc') // Order by end date for chronological chart
+            .get();
+        return querySnapshot.docs.map(doc => doc.data());
+    } catch (error) {
+        console.error("Error fetching historical official bills:", error);
+        return [];
+    }
+}
+
+// Processes raw official bill data for the bi-monthly chart.
+function processOfficialBillsForChart(officialBills) {
+    if (officialBills.length === 0) {
+        return { labels: [], unitsData: [], billAmountData: [] };
+    }
+
+    const labels = [];
+    const unitsData = [];
+    const billAmountData = [];
+
+    officialBills.forEach(bill => {
+        const label = formatMonthYearRangeForDisplay(bill.billing_cycle_start_date, bill.billing_cycle_end_date);
+        labels.push(label);
+        unitsData.push(bill.units_consumed_bi_monthly);
+        billAmountData.push(bill.kseb_bill_amount); // Use the actual KSEB bill amount
+    });
+
+    return { labels, unitsData, billAmountData };
+}
+
+// Renders the bi-monthly electricity bill summary chart using Chart.js.
+async function renderBiMonthlySummaryChart() {
+    console.log("Attempting to render bi-monthly summary chart...");
+    const canvas = document.getElementById('biMonthlySummaryChart');
+    const noDataMessage = document.getElementById('bimonthly-chart-no-data-message');
+
+    if (!canvas || !noDataMessage) {
+        console.warn("Bi-monthly chart canvas or no-data message element not found.");
+        return;
+    }
+
+    const officialBills = await fetchHistoricalOfficialBills();
+    const { labels, unitsData, billAmountData } = processOfficialBillsForChart(officialBills);
+
+    if (labels.length === 0) {
+        noDataMessage.classList.remove('hidden'); // Show no data message
+        if (myBiMonthlyChart) {
+            myBiMonthlyChart.destroy(); // Destroy existing chart if no data
+            myBiMonthlyChart = null;
+        }
+        console.log("Not enough official bill data to render bi-monthly chart.");
+        return;
+    } else {
+        noDataMessage.classList.add('hidden'); // Hide no data message
+    }
+
+    const ctx = canvas.getContext('2d');
+
+    // Destroy existing chart instance if it exists
+    if (myBiMonthlyChart) {
+        myBiMonthlyChart.destroy();
+    }
+
+    myBiMonthlyChart = new Chart(ctx, {
+        type: 'bar', // Bar chart for summaries
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Units Consumed',
+                    data: unitsData,
+                    backgroundColor: 'rgba(153, 102, 255, 0.8)', // Purple
+                    borderColor: 'rgba(153, 102, 255, 1)',
+                    borderWidth: 1,
+                    yAxisID: 'y' // Associate with left Y-axis
+                },
+                {
+                    label: 'Actual Bill Amount (₹)',
+                    data: billAmountData,
+                    backgroundColor: 'rgba(255, 99, 132, 0.8)', // Reddish
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 1,
+                    yAxisID: 'y1' // Associate with right Y-axis
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: '#cbd5e1' // text-gray-300
+                    }
+                },
+                title: {
+                    display: true,
+                    text: 'Bi-Monthly Consumption & Bill Amount',
+                    color: '#ffffff' // text-white
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.dataset.label === 'Units Consumed') {
+                                label += context.parsed.y.toFixed(0) + ' units'; // Units as whole number
+                            } else {
+                                label += '₹' + context.parsed.y.toFixed(2); // Bill amount with 2 decimal places
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Billing Cycle (Month-Year)',
+                        color: '#94a3b8'
+                    },
+                    grid: {
+                        color: 'rgba(100, 116, 139, 0.2)'
+                    },
+                    ticks: {
+                        color: '#cbd5e1'
+                    }
+                },
+                y: { // Left Y-axis for Units
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Units Consumed',
+                        color: '#94a3b8'
+                    },
+                    beginAtZero: true,
+                    grid: {
+                        color: 'rgba(100, 116, 139, 0.2)'
+                    },
+                    ticks: {
+                        color: '#cbd5e1'
+                    }
+                },
+                y1: { // Right Y-axis for Bill Amount
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    title: {
+                        display: true,
+                        text: 'Bill Amount (₹)',
+                        color: '#94a3b8'
+                    },
+                    grid: {
+                        drawOnChartArea: false, // Only draw grid lines for the first y-axis
+                        color: 'rgba(100, 116, 139, 0.2)'
+                    },
+                    ticks: {
+                        color: '#cbd5e1'
+                    }
+                }
+            }
+        }
+    });
+    console.log("Bi-monthly summary chart rendered.");
 }

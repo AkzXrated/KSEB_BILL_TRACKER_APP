@@ -32,16 +32,6 @@
 - **Previous Bill Comparison**
 - **Average Bill Analysis**
 - **Deviation from Actual Bill**
-# ⚡ KSEB Bill Tracker
-![GitHub last commit](https://img.shields.io/github/last-commit/AkzXrated/KSEB_BILL_TRACKER_APP) 
-![GitHub top language](https://img.shields.io/github/languages/top/AkzXrated/KSEB_BILL_TRACKER_APP)
-![GitHub repo size](https://img.shields.io/github/repo-size/AkzXrated/KSEB_BILL_TRACKER_APP)
-![GitHub contributors](https://img.shields.io/github/contributors/AkzXrated/KSEB_BILL_TRACKER_APP)
-## Your Smart Companion for KSEB Electricity Consumption in Kerala!
-
-KSEB Bill Tracker is a modern, intuitive web application designed to empower KSEB consumers in Kerala to actively monitor their daily electricity usage and estimate their bi-monthly bills. Say goodbye to bill surprises and gain complete control over your energy consumption habits!
-
----
 
 ### 🚀 Getting Started
 
